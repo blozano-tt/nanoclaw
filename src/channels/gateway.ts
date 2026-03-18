@@ -1,4 +1,6 @@
 import http from 'http';
+import https from 'https';
+import fs from 'fs';
 import { ASSISTANT_NAME } from '../config.js';
 import { logger } from '../logger.js';
 import { readEnvFile } from '../env.js';
@@ -39,17 +41,49 @@ export interface GatewayChannelOpts {
   registeredGroups: () => Record<string, RegisteredGroup>;
 }
 
+// ----- TLS helpers -----
+
+interface TlsConfig {
+  cert: Buffer;
+  key: Buffer;
+  ca: Buffer;
+}
+
+function loadTlsConfig(env: Record<string, string>): TlsConfig | null {
+  const certPath = env.GATEWAY_TLS_CERT;
+  const keyPath = env.GATEWAY_TLS_KEY;
+  const caPath = env.GATEWAY_TLS_CA;
+
+  if (!certPath || !keyPath || !caPath) return null;
+
+  try {
+    const config = {
+      cert: fs.readFileSync(certPath),
+      key: fs.readFileSync(keyPath),
+      ca: fs.readFileSync(caPath),
+    };
+    logger.info(
+      { cert: certPath, key: keyPath, ca: caPath },
+      'mTLS certificates loaded for gateway channel',
+    );
+    return config;
+  } catch (err) {
+    logger.error({ err }, 'Failed to load mTLS certificates');
+    return null;
+  }
+}
+
 /**
  * GatewayChannel connects this NanoClaw instance to a BrAIn Gateway.
  *
  * Instead of holding a direct Slack Socket Mode connection, this channel:
- * 1. Starts a local HTTP server to receive forwarded messages from the gateway
+ * 1. Starts a local HTTP(S) server to receive forwarded messages from the gateway
  * 2. Registers with the gateway (providing this server's endpoint)
  * 3. Sends heartbeats to stay marked as healthy
- * 4. Posts responses back to the gateway via HTTP, which relays them to Slack
+ * 4. Posts responses back to the gateway via HTTP(S), which relays them to Slack
  *
- * This enables multi-user deployments where a single Slack app + gateway
- * routes messages to many NanoClaw instances on different VMs.
+ * When TLS certificates are configured (GATEWAY_TLS_CERT, GATEWAY_TLS_KEY,
+ * GATEWAY_TLS_CA), all connections use mTLS for mutual authentication.
  */
 export class GatewayChannel implements Channel {
   name = 'gateway';
@@ -62,7 +96,10 @@ export class GatewayChannel implements Channel {
   private listenPort: number;
   private channels: string[];
 
-  private server: http.Server | null = null;
+  private tlsConfig: TlsConfig | null;
+  private tlsAgent: https.Agent | null = null;
+
+  private server: http.Server | https.Server | null = null;
   private connected = false;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private opts: GatewayChannelOpts;
@@ -83,6 +120,9 @@ export class GatewayChannel implements Channel {
       'GATEWAY_OWNER_SLACK_ID',
       'GATEWAY_LISTEN_PORT',
       'GATEWAY_CHANNELS',
+      'GATEWAY_TLS_CERT',
+      'GATEWAY_TLS_KEY',
+      'GATEWAY_TLS_CA',
     ]);
 
     this.gatewayUrl = env.GATEWAY_URL || '';
@@ -95,10 +135,22 @@ export class GatewayChannel implements Channel {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
+
+    // Load TLS config if all three paths are set
+    this.tlsConfig = loadTlsConfig(env);
+
+    if (this.tlsConfig) {
+      this.tlsAgent = new https.Agent({
+        cert: this.tlsConfig.cert,
+        key: this.tlsConfig.key,
+        ca: this.tlsConfig.ca,
+        rejectUnauthorized: true,
+      });
+    }
   }
 
   async connect(): Promise<void> {
-    // Start local HTTP server to receive forwarded messages
+    // Start local HTTP(S) server to receive forwarded messages
     await this.startServer();
 
     // Register with the gateway
@@ -118,6 +170,7 @@ export class GatewayChannel implements Channel {
         agentId: this.agentId,
         listenPort: this.listenPort,
         channels: this.channels,
+        tls: !!this.tlsConfig,
       },
       'Connected to BrAIn Gateway',
     );
@@ -143,7 +196,7 @@ export class GatewayChannel implements Channel {
     const url = `${this.gatewayUrl}/respond`;
 
     try {
-      const resp = await fetch(url, {
+      const resp = await this.tlsFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -207,7 +260,7 @@ export class GatewayChannel implements Channel {
 
     // Unregister from gateway (best effort)
     try {
-      await fetch(`${this.gatewayUrl}/unregister`, {
+      await this.tlsFetch(`${this.gatewayUrl}/unregister`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -219,14 +272,79 @@ export class GatewayChannel implements Channel {
       // Best effort
     }
 
+    if (this.tlsAgent) {
+      this.tlsAgent.destroy();
+      this.tlsAgent = null;
+    }
+
     logger.info('Disconnected from BrAIn Gateway');
   }
 
   // ----- Private methods -----
 
+  /**
+   * Fetch wrapper that uses mTLS when certificates are configured.
+   * Falls back to plain fetch when TLS is not enabled.
+   */
+  private async tlsFetch(
+    url: string,
+    init: RequestInit,
+  ): Promise<Response> {
+    if (!this.tlsAgent) {
+      return fetch(url, init);
+    }
+
+    // Use https.request with client cert for mTLS
+    return new Promise<Response>((resolve, reject) => {
+      const parsed = new URL(url);
+      const transport = parsed.protocol === 'https:' ? https : http;
+
+      const req = transport.request(
+        {
+          hostname: parsed.hostname,
+          port: parsed.port,
+          path: parsed.pathname + parsed.search,
+          method: init.method || 'GET',
+          headers: init.headers as Record<string, string>,
+          agent: this.tlsAgent!,
+          timeout: 10_000,
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (chunk: Buffer) => {
+            body += chunk.toString();
+          });
+          res.on('end', () => {
+            resolve({
+              ok: (res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300,
+              status: res.statusCode || 0,
+              statusText: res.statusMessage || '',
+              text: () => Promise.resolve(body),
+              json: () => Promise.resolve(JSON.parse(body)),
+              headers: new Headers(),
+            } as Response);
+          });
+        },
+      );
+
+      req.on('error', reject);
+      req.on('timeout', () => {
+        req.destroy(new Error('Request timeout'));
+      });
+
+      if (init.body) {
+        req.write(init.body);
+      }
+      req.end();
+    });
+  }
+
   private async startServer(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.server = http.createServer((req, res) => {
+      const handler = (
+        req: http.IncomingMessage,
+        res: http.ServerResponse,
+      ): void => {
         if (req.method === 'POST' && req.url === '/message') {
           if (!this.authenticateRequest(req)) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -241,7 +359,24 @@ export class GatewayChannel implements Channel {
           res.writeHead(404);
           res.end();
         }
-      });
+      };
+
+      if (this.tlsConfig) {
+        // mTLS server: require and verify client certificates
+        this.server = https.createServer(
+          {
+            cert: this.tlsConfig.cert,
+            key: this.tlsConfig.key,
+            ca: this.tlsConfig.ca,
+            requestCert: true,
+            rejectUnauthorized: true,
+          },
+          handler,
+        );
+        logger.info('Gateway listener using mTLS');
+      } else {
+        this.server = http.createServer(handler);
+      }
 
       this.server.on('error', (err) => {
         logger.error({ err, port: this.listenPort }, 'Gateway listener error');
@@ -250,8 +385,8 @@ export class GatewayChannel implements Channel {
 
       this.server.listen(this.listenPort, '0.0.0.0', () => {
         logger.info(
-          { port: this.listenPort },
-          'Gateway message listener started',
+          { port: this.listenPort, tls: !!this.tlsConfig },
+          `Gateway message listener started (${this.tlsConfig ? 'mTLS' : 'HTTP'})`,
         );
         resolve();
       });
@@ -361,9 +496,10 @@ export class GatewayChannel implements Channel {
       process.env.GATEWAY_EXTERNAL_HOST ||
       (await this.getHostname());
 
-    const endpoint = `http://${hostname}:${this.listenPort}`;
+    const protocol = this.tlsConfig ? 'https' : 'http';
+    const endpoint = `${protocol}://${hostname}:${this.listenPort}`;
 
-    const resp = await fetch(`${this.gatewayUrl}/register`, {
+    const resp = await this.tlsFetch(`${this.gatewayUrl}/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -391,7 +527,7 @@ export class GatewayChannel implements Channel {
 
   private async sendHeartbeat(): Promise<void> {
     try {
-      const resp = await fetch(`${this.gatewayUrl}/heartbeat`, {
+      const resp = await this.tlsFetch(`${this.gatewayUrl}/heartbeat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
