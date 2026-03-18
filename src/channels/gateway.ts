@@ -493,8 +493,7 @@ export class GatewayChannel implements Channel {
     // Determine our externally reachable endpoint
     // The gateway needs to reach us — use hostname or IP
     const hostname =
-      process.env.GATEWAY_EXTERNAL_HOST ||
-      (await this.getHostname());
+      process.env.GATEWAY_EXTERNAL_HOST || (await this.getHostname());
 
     const protocol = this.tlsConfig ? 'https' : 'http';
     const endpoint = `${protocol}://${hostname}:${this.listenPort}`;
@@ -519,10 +518,7 @@ export class GatewayChannel implements Channel {
       throw new Error(`Registration failed: ${resp.status} ${body}`);
     }
 
-    logger.info(
-      { agentId: this.agentId, endpoint },
-      'Registered with gateway',
-    );
+    logger.info({ agentId: this.agentId, endpoint }, 'Registered with gateway');
   }
 
   private async sendHeartbeat(): Promise<void> {
@@ -537,10 +533,7 @@ export class GatewayChannel implements Channel {
       });
 
       if (!resp.ok) {
-        logger.warn(
-          { status: resp.status },
-          'Gateway heartbeat failed',
-        );
+        logger.warn({ status: resp.status }, 'Gateway heartbeat failed');
       }
     } catch (err) {
       logger.error({ err }, 'Gateway heartbeat error');
@@ -554,9 +547,7 @@ export class GatewayChannel implements Channel {
   }
 
   private evictOldThreadTargets(): void {
-    if (
-      this.messageThreadTarget.size <= GatewayChannel.MAX_THREAD_MAP_SIZE
-    ) {
+    if (this.messageThreadTarget.size <= GatewayChannel.MAX_THREAD_MAP_SIZE) {
       return;
     }
     const excess =

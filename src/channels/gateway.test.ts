@@ -187,8 +187,7 @@ describe('GatewayChannel', () => {
       // Get the actual port the server is listening on
       const server = (channel as any).server as http.Server;
       const addr = server.address();
-      serverPort =
-        typeof addr === 'object' && addr ? addr.port : 0;
+      serverPort = typeof addr === 'object' && addr ? addr.port : 0;
     });
 
     afterEach(async () => {
