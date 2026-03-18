@@ -3,6 +3,9 @@
 
 // discord
 
+// gateway
+import './gateway.js';
+
 // gmail
 
 // slack

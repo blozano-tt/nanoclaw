@@ -21,9 +21,12 @@ import { logger } from './logger.js';
 import {
   CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
+  IS_PODMAN,
   hostGatewayArgs,
   readonlyMountArgs,
   stopContainer,
+  userNamespaceArgs,
+  writableMountSuffix,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
@@ -168,7 +171,19 @@ function buildVolumeMounts(
   const groupIpcDir = resolveGroupIpcPath(group.folder);
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+  const inputDir = path.join(groupIpcDir, 'input');
+  fs.mkdirSync(inputDir, { recursive: true });
+  // Podman: --userns=keep-id maps the host UID but the container process is
+  // USER node (uid 1000). The container needs to unlink IPC files created by the
+  // host user — that requires write permission on the parent directory.
+  // 0o777 (no sticky bit) enables this cross-user cleanup.
+  if (IS_PODMAN) {
+    try {
+      fs.chmodSync(inputDir, 0o777);
+    } catch {
+      /* best-effort — may fail on some filesystems */
+    }
+  }
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
@@ -241,21 +256,30 @@ function buildContainerArgs(
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
 
-  // Run as host user so bind-mounted files are accessible.
-  // Skip when running as root (uid 0), as the container's node user (uid 1000),
-  // or when getuid is unavailable (native Windows without WSL).
-  const hostUid = process.getuid?.();
-  const hostGid = process.getgid?.();
-  if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
-    args.push('--user', `${hostUid}:${hostGid}`);
-    args.push('-e', 'HOME=/home/node');
+  // UID mapping: ensure bind-mounted files are accessible inside the container.
+  // Podman: --userns=keep-id maps the host UID into the container, so files
+  //   have correct ownership without setgroups() — works with any host UID.
+  // Docker: --user UID:GID runs the container process as the host user directly.
+  //   Skip when running as root (uid 0), as the container's node user (uid 1000),
+  //   or when getuid is unavailable (native Windows without WSL).
+  if (IS_PODMAN) {
+    args.push(...userNamespaceArgs());
+  } else {
+    const hostUid = process.getuid?.();
+    const hostGid = process.getgid?.();
+    if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
+      args.push('--user', `${hostUid}:${hostGid}`);
+      args.push('-e', 'HOME=/home/node');
+    }
   }
 
   for (const mount of mounts) {
     if (mount.readonly) {
       args.push(...readonlyMountArgs(mount.hostPath, mount.containerPath));
     } else {
-      args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
+      // Podman + SELinux: :z relabels files so container_t can access them
+      const suffix = writableMountSuffix(mount.hostPath);
+      args.push('-v', `${mount.hostPath}:${mount.containerPath}${suffix}`);
     }
   }
 
@@ -434,6 +458,28 @@ export async function runContainerAgent(
 
     container.on('close', (code) => {
       clearTimeout(timeout);
+
+      // Host-side IPC cleanup: if the container exits without consuming pending
+      // IPC input files (e.g. killed while idle), clean up input/ to avoid
+      // ghost messages on the next run.
+      try {
+        const groupIpcInputDir = path.join(
+          resolveGroupIpcPath(group.folder),
+          'input',
+        );
+        if (fs.existsSync(groupIpcInputDir)) {
+          for (const f of fs.readdirSync(groupIpcInputDir)) {
+            try {
+              fs.unlinkSync(path.join(groupIpcInputDir, f));
+            } catch {
+              /* best-effort cleanup */
+            }
+          }
+        }
+      } catch {
+        /* non-fatal */
+      }
+
       const duration = Date.now() - startTime;
 
       if (timedOut) {

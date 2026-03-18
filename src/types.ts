@@ -51,6 +51,11 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  thread_id?: string;
+}
+
+export interface SendMessageOpts {
+  replyTo?: string; // message ID to reply to
 }
 
 export interface ScheduledTask {
