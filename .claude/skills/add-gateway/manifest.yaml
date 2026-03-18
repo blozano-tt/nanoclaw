@@ -1,0 +1,21 @@
+skill: gateway
+version: 1.0.0
+description: "Gateway channel — connects NanoClaw to a BrAIn Gateway for multi-user Slack routing"
+core_version: 0.1.0
+adds:
+  - src/channels/gateway.ts
+  - src/channels/gateway.test.ts
+modifies:
+  - src/channels/index.ts
+structured:
+  npm_dependencies: {}
+  env_additions:
+    - GATEWAY_URL
+    - GATEWAY_SECRET
+    - GATEWAY_AGENT_ID
+    - GATEWAY_AGENT_NAME
+    - GATEWAY_OWNER_SLACK_ID
+    - GATEWAY_LISTEN_PORT
+conflicts: []
+depends: []
+test: "npx vitest run src/channels/gateway.test.ts"
