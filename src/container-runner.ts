@@ -224,6 +224,23 @@ function buildVolumeMounts(
     mounts.push(...validatedMounts);
   }
 
+  // Podman: --userns=keep-id maps the host UID into the container, but the
+  // container process runs as USER node (uid 1000). All writable bind mounts
+  // are created by the host (uid 1211406110+) and default to 755, so node
+  // can't write to them. chmod 0o777 every writable mount directory so the
+  // container can create files, clone repos, write session state, etc.
+  if (IS_PODMAN) {
+    for (const mount of mounts) {
+      if (!mount.readonly) {
+        try {
+          fs.chmodSync(mount.hostPath, 0o777);
+        } catch {
+          /* best-effort — may fail on device nodes or read-only FS */
+        }
+      }
+    }
+  }
+
   return mounts;
 }
 
@@ -265,11 +282,11 @@ function buildContainerArgs(
   if (IS_PODMAN) {
     args.push(...userNamespaceArgs());
   } else {
-    const hostUid = process.getuid?.();
-    const hostGid = process.getgid?.();
-    if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
-      args.push('--user', `${hostUid}:${hostGid}`);
-      args.push('-e', 'HOME=/home/node');
+  const hostUid = process.getuid?.();
+  const hostGid = process.getgid?.();
+  if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
+    args.push('--user', `${hostUid}:${hostGid}`);
+    args.push('-e', 'HOME=/home/node');
     }
   }
 
