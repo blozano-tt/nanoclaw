@@ -29,6 +29,7 @@ import {
   writableMountSuffix,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -270,6 +271,26 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
+  // Pass through additional env vars from .env into the container.
+  // CONTAINER_PASSTHROUGH_ENV is a comma-separated list of variable names
+  // (e.g. "GITHUB_TOKEN,SLACK_TOKEN"). Values are read from .env at startup.
+  const passthroughConfig = readEnvFile(['CONTAINER_PASSTHROUGH_ENV']);
+  const passthroughNames = (
+    passthroughConfig.CONTAINER_PASSTHROUGH_ENV || ''
+  )
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (passthroughNames.length > 0) {
+    const passthroughEnv = readEnvFile(passthroughNames);
+    for (const name of passthroughNames) {
+      const value = passthroughEnv[name] || process.env[name];
+      if (value) {
+        args.push('-e', `${name}=${value}`);
+      }
+    }
+  }
+
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
 
@@ -282,11 +303,11 @@ function buildContainerArgs(
   if (IS_PODMAN) {
     args.push(...userNamespaceArgs());
   } else {
-  const hostUid = process.getuid?.();
-  const hostGid = process.getgid?.();
-  if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
-    args.push('--user', `${hostUid}:${hostGid}`);
-    args.push('-e', 'HOME=/home/node');
+    const hostUid = process.getuid?.();
+    const hostGid = process.getgid?.();
+    if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
+      args.push('--user', `${hostUid}:${hostGid}`);
+      args.push('-e', 'HOME=/home/node');
     }
   }
 

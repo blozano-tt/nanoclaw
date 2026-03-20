@@ -286,10 +286,7 @@ export class GatewayChannel implements Channel {
    * Fetch wrapper that uses mTLS when certificates are configured.
    * Falls back to plain fetch when TLS is not enabled.
    */
-  private async tlsFetch(
-    url: string,
-    init: RequestInit,
-  ): Promise<Response> {
+  private async tlsFetch(url: string, init: RequestInit): Promise<Response> {
     if (!this.tlsAgent) {
       return fetch(url, init);
     }
