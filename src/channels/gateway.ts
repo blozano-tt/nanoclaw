@@ -95,6 +95,7 @@ export class GatewayChannel implements Channel {
   private ownerSlackId: string;
   private listenPort: number;
   private channels: string[];
+  private allowedUsers: string[];
 
   private tlsConfig: TlsConfig | null;
   private tlsAgent: https.Agent | null = null;
@@ -120,6 +121,7 @@ export class GatewayChannel implements Channel {
       'GATEWAY_OWNER_SLACK_ID',
       'GATEWAY_LISTEN_PORT',
       'GATEWAY_CHANNELS',
+      'GATEWAY_ALLOWED_USERS',
       'GATEWAY_TLS_CERT',
       'GATEWAY_TLS_KEY',
       'GATEWAY_TLS_CA',
@@ -132,6 +134,10 @@ export class GatewayChannel implements Channel {
     this.ownerSlackId = env.GATEWAY_OWNER_SLACK_ID || '';
     this.listenPort = parseInt(env.GATEWAY_LISTEN_PORT || '9090', 10);
     this.channels = (env.GATEWAY_CHANNELS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    this.allowedUsers = (env.GATEWAY_ALLOWED_USERS || '')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
@@ -507,6 +513,7 @@ export class GatewayChannel implements Channel {
         endpoint,
         ownerSlackId: this.ownerSlackId,
         channels: this.channels,
+        allowedUsers: this.allowedUsers,
       }),
     });
 
