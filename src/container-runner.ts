@@ -275,9 +275,7 @@ function buildContainerArgs(
   // CONTAINER_PASSTHROUGH_ENV is a comma-separated list of variable names
   // (e.g. "GITHUB_TOKEN,SLACK_TOKEN"). Values are read from .env at startup.
   const passthroughConfig = readEnvFile(['CONTAINER_PASSTHROUGH_ENV']);
-  const passthroughNames = (
-    passthroughConfig.CONTAINER_PASSTHROUGH_ENV || ''
-  )
+  const passthroughNames = (passthroughConfig.CONTAINER_PASSTHROUGH_ENV || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
