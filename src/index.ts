@@ -561,6 +561,44 @@ async function main(): Promise<void> {
         return;
       }
 
+      // Auto-register DM conversations so they flow into processing.
+      // Each DM gets its own folder (with CLAUDE.md copied from main) and
+      // its own session, but requiresTrigger is false — in a DM the user
+      // is talking directly to the bot, no @mention needed.
+      if (chatJid.startsWith('slack:D') && !registeredGroups[chatJid]) {
+        const mainGroup = Object.values(registeredGroups).find((g) => g.isMain);
+        if (mainGroup) {
+          const dmChannelId = chatJid.replace(/^slack:/, '');
+          const folderName = `slack_dm-${dmChannelId}`;
+          try {
+            const mainGroupDir = resolveGroupFolderPath(mainGroup.folder);
+            const dmGroupDir = resolveGroupFolderPath(folderName);
+            fs.mkdirSync(path.join(dmGroupDir, 'logs'), { recursive: true });
+            const mainClaudeMd = path.join(mainGroupDir, 'CLAUDE.md');
+            const dmClaudeMd = path.join(dmGroupDir, 'CLAUDE.md');
+            if (fs.existsSync(mainClaudeMd) && !fs.existsSync(dmClaudeMd)) {
+              fs.copyFileSync(mainClaudeMd, dmClaudeMd);
+            }
+            registerGroup(chatJid, {
+              name: `DM ${msg.sender_name || dmChannelId}`,
+              folder: folderName,
+              trigger: `@${ASSISTANT_NAME}`,
+              added_at: new Date().toISOString(),
+              requiresTrigger: false,
+            });
+            logger.info(
+              { chatJid, folder: folderName, sender: msg.sender_name },
+              'Auto-registered DM conversation',
+            );
+          } catch (err) {
+            logger.error(
+              { chatJid, err },
+              'Failed to auto-register DM conversation',
+            );
+          }
+        }
+      }
+
       // Sender allowlist drop mode: discard messages from denied senders before storing
       if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
         const cfg = loadSenderAllowlist();
