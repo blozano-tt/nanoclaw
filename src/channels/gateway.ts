@@ -187,11 +187,17 @@ export class GatewayChannel implements Channel {
     text: string,
     opts?: SendMessageOpts,
   ): Promise<void> {
-    // Determine thread context
+    // Determine thread context — precedence:
+    // 1. Explicit threadId (caller knows the thread)
+    // 2. Lookup by specific message ID (replyTo)
+    // 3. Per-channel fallback (last resort, may be stale with concurrent threads)
     const channelId = jid.replace(/^slack:/, '');
     let threadTs: string | undefined;
 
-    if (opts?.replyTo) {
+    if (opts?.threadId) {
+      threadTs = opts.threadId;
+    }
+    if (!threadTs && opts?.replyTo) {
       threadTs = this.messageThreadTarget.get(opts.replyTo);
     }
     if (!threadTs) {
@@ -225,7 +231,7 @@ export class GatewayChannel implements Channel {
       }
 
       logger.info(
-        { jid, length: text.length, thread: !!threadTs },
+        { jid, length: text.length, thread: !!threadTs, threadTs },
         'Response sent via gateway',
       );
     } catch (err) {

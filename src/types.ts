@@ -56,6 +56,7 @@ export interface NewMessage {
 
 export interface SendMessageOpts {
   replyTo?: string; // message ID to reply to
+  threadId?: string; // explicit thread to reply in (takes precedence over replyTo)
 }
 
 export interface ScheduledTask {
@@ -87,7 +88,7 @@ export interface TaskRunLog {
 export interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(jid: string, text: string): Promise<void>;
+  sendMessage(jid: string, text: string, opts?: SendMessageOpts): Promise<void>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;
