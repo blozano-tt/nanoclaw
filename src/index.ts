@@ -188,8 +188,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   // Sort threads by their earliest message (process oldest first).
-  const sortedThreads = [...messagesByThread.entries()].sort(
-    (a, b) => a[1][0].timestamp.localeCompare(b[1][0].timestamp),
+  const sortedThreads = [...messagesByThread.entries()].sort((a, b) =>
+    a[1][0].timestamp.localeCompare(b[1][0].timestamp),
   );
 
   if (sortedThreads.length > 1) {
@@ -216,7 +216,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // drain loop since the container is still marked active).
   let anyError = false;
 
-  for (const [threadId, threadMessages] of sortedThreads) {
+  for (let threadIdx = 0; threadIdx < sortedThreads.length; threadIdx++) {
+    const [threadId, threadMessages] = sortedThreads[threadIdx];
+    const isLastThread = threadIdx === sortedThreads.length - 1;
     // ── Trigger check (per-thread) ──
     if (!isMainGroup && group.requiresTrigger !== false) {
       const allowlistCfg = loadSenderAllowlist();
@@ -276,7 +278,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             : JSON.stringify(result.result);
         // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
         const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-        logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
+        logger.info(
+          { group: group.name },
+          `Agent output: ${raw.slice(0, 200)}`,
+        );
         if (text) {
           await channel.sendMessage(chatJid, text, {
             threadId: replyThreadId,
@@ -288,7 +293,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
 
       if (result.status === 'success') {
-        queue.notifyIdle(chatJid);
+        if (isLastThread) {
+          // Last thread: normal idle behaviour — keep container warm for piped follow-ups
+          queue.notifyIdle(chatJid);
+        } else {
+          // More threads to process: close stdin immediately so runAgent returns
+          // and the for-loop can proceed without waiting 30 minutes for the idle timeout
+          queue.closeStdin(chatJid);
+        }
       }
 
       if (result.status === 'error') {
@@ -495,9 +507,11 @@ async function startMessageLoop(): Promise<void> {
           // wrong thread (the callback closure captures a fixed threadId,
           // but piped messages bypass that and use activeReplyThread).
           const currentThread = activeReplyThread.get(chatJid);
-          const hasCrossThread = currentThread && messagesToSend.some(
-            (m) => m.thread_id && m.thread_id !== currentThread,
-          );
+          const hasCrossThread =
+            currentThread &&
+            messagesToSend.some(
+              (m) => m.thread_id && m.thread_id !== currentThread,
+            );
 
           if (hasCrossThread) {
             // Don't pipe — let processGroupMessages handle these after
@@ -523,7 +537,10 @@ async function startMessageLoop(): Promise<void> {
               channel
                 .setTyping?.(chatJid, true)
                 ?.catch((err) =>
-                  logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
+                  logger.warn(
+                    { chatJid, err },
+                    'Failed to set typing indicator',
+                  ),
                 );
             } else {
               // No active container — enqueue for a new one
@@ -741,9 +758,10 @@ async function main(): Promise<void> {
         return;
       }
       const text = formatOutbound(rawText);
-      if (text) await channel.sendMessage(jid, text, {
-        threadId: activeReplyThread.get(jid),
-      });
+      if (text)
+        await channel.sendMessage(jid, text, {
+          threadId: activeReplyThread.get(jid),
+        });
     },
   });
   startIpcWatcher({

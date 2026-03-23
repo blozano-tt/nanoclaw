@@ -16,9 +16,7 @@ export function formatMessages(
 ): string {
   const lines = messages.map((m) => {
     const displayTime = formatLocalTime(m.timestamp, timezone);
-    const threadAttr = m.thread_id
-      ? ` thread="${escapeXml(m.thread_id)}"`
-      : '';
+    const threadAttr = m.thread_id ? ` thread="${escapeXml(m.thread_id)}"` : '';
     return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}"${threadAttr}>${escapeXml(m.content)}</message>`;
   });
 
