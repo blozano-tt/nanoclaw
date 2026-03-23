@@ -389,6 +389,44 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // ── MCP Servers ──
+  const mcpServers: Record<string, any> = {
+    nanoclaw: {
+      command: 'node',
+      args: [mcpServerPath],
+      env: {
+        NANOCLAW_CHAT_JID: containerInput.chatJid,
+        NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+        NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+      },
+    },
+  };
+
+  // Mermaid diagram generation MCP
+  mcpServers['mcp-mermaid'] = {
+    command: 'npx',
+    args: ['--yes', 'github:2b3pro/mcp-mermaid'],
+  };
+  log('mcp-mermaid MCP server configured');
+
+  // Grafana MCP — dashboards, alerting, data source queries
+  // Credentials are passed in from .env via CONTAINER_PASSTHROUGH_ENV
+  const grafanaUrl = process.env.GRAFANA_URL;
+  const grafanaToken = process.env.GRAFANA_SERVICE_ACCOUNT_TOKEN;
+  if (grafanaUrl && grafanaToken) {
+    mcpServers['grafana'] = {
+      command: 'npx',
+      args: ['-y', 'mcp-grafana-npx@latest'],
+      env: {
+        GRAFANA_URL: grafanaUrl,
+        GRAFANA_SERVICE_ACCOUNT_TOKEN: grafanaToken,
+      },
+    };
+    log('Grafana MCP server configured');
+  } else {
+    log('GRAFANA_URL/GRAFANA_SERVICE_ACCOUNT_TOKEN not set, skipping Grafana MCP');
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -407,23 +445,15 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__nanoclaw__*',
+        'mcp__mcp-mermaid__*',
+        'mcp__grafana__*',
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
-      mcpServers: {
-        nanoclaw: {
-          command: 'node',
-          args: [mcpServerPath],
-          env: {
-            NANOCLAW_CHAT_JID: containerInput.chatJid,
-            NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-            NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
-          },
-        },
-      },
+      mcpServers,
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
       },
