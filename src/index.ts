@@ -584,6 +584,32 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+
+  // Auto-bootstrap a main group if none exists.
+  // Without a main group, DM auto-registration is blocked because it needs
+  // a main group to copy CLAUDE.md from. This ensures DM-only instances
+  // (no GATEWAY_CHANNELS) work out of the box.
+  const hasMainGroup = Object.values(registeredGroups).some((g) => g.isMain);
+  if (!hasMainGroup) {
+    const mainDir = resolveGroupFolderPath("main");
+    fs.mkdirSync(path.join(mainDir, "logs"), { recursive: true });
+    const claudeMd = path.join(mainDir, "CLAUDE.md");
+    if (!fs.existsSync(claudeMd)) {
+      fs.writeFileSync(
+        claudeMd,
+        `# ${ASSISTANT_NAME}\n\nYou are ${ASSISTANT_NAME}, a helpful AI assistant.\nRespond concisely and helpfully.\n`,
+      );
+    }
+    registerGroup("gateway:main", {
+      name: `${ASSISTANT_NAME} Main`,
+      folder: "main",
+      trigger: `@${ASSISTANT_NAME}`,
+      added_at: new Date().toISOString(),
+      requiresTrigger: false,
+      isMain: true,
+    });
+    logger.info("Auto-created main group for DM support");
+  }
   restoreRemoteControl();
 
   // Start credential proxy (containers route API calls through this)
