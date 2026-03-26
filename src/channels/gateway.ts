@@ -93,9 +93,11 @@ export class GatewayChannel implements Channel {
   private agentId: string;
   private agentName: string;
   private ownerSlackId: string;
+  private ownerEmail: string;
   private listenPort: number;
   private channels: string[];
   private allowedUsers: string[];
+  private allowedEmails: string[];
 
   private tlsConfig: TlsConfig | null;
   private tlsAgent: https.Agent | null = null;
@@ -119,9 +121,11 @@ export class GatewayChannel implements Channel {
       'GATEWAY_AGENT_ID',
       'GATEWAY_AGENT_NAME',
       'GATEWAY_OWNER_SLACK_ID',
+      'GATEWAY_OWNER_EMAIL',
       'GATEWAY_LISTEN_PORT',
       'GATEWAY_CHANNELS',
       'GATEWAY_ALLOWED_USERS',
+      'GATEWAY_ALLOWED_EMAILS',
       'GATEWAY_TLS_CERT',
       'GATEWAY_TLS_KEY',
       'GATEWAY_TLS_CA',
@@ -132,12 +136,17 @@ export class GatewayChannel implements Channel {
     this.agentId = env.GATEWAY_AGENT_ID || '';
     this.agentName = env.GATEWAY_AGENT_NAME || ASSISTANT_NAME;
     this.ownerSlackId = env.GATEWAY_OWNER_SLACK_ID || '';
+    this.ownerEmail = env.GATEWAY_OWNER_EMAIL || '';
     this.listenPort = parseInt(env.GATEWAY_LISTEN_PORT || '9090', 10);
     this.channels = (env.GATEWAY_CHANNELS || '')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
     this.allowedUsers = (env.GATEWAY_ALLOWED_USERS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    this.allowedEmails = (env.GATEWAY_ALLOWED_EMAILS || '')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
@@ -507,20 +516,39 @@ export class GatewayChannel implements Channel {
     const protocol = this.tlsConfig ? 'https' : 'http';
     const endpoint = `${protocol}://${hostname}:${this.listenPort}`;
 
+    // Build registration payload.
+    // Email-based identity is preferred; Slack IDs are sent as fallback.
+    // The Gateway resolves emails → Slack IDs on its side.
+    const payload: Record<string, unknown> = {
+      id: this.agentId,
+      name: this.agentName,
+      endpoint,
+      channels: this.channels,
+    };
+
+    // Owner identity: prefer email, fall back to Slack ID
+    if (this.ownerEmail) {
+      payload.ownerEmail = this.ownerEmail;
+    }
+    if (this.ownerSlackId) {
+      payload.ownerSlackId = this.ownerSlackId;
+    }
+
+    // Allowed users: prefer emails, fall back to Slack IDs
+    if (this.allowedEmails.length > 0) {
+      payload.allowedEmails = this.allowedEmails;
+    }
+    if (this.allowedUsers.length > 0) {
+      payload.allowedUsers = this.allowedUsers;
+    }
+
     const resp = await this.tlsFetch(`${this.gatewayUrl}/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.gatewaySecret}`,
       },
-      body: JSON.stringify({
-        id: this.agentId,
-        name: this.agentName,
-        endpoint,
-        ownerSlackId: this.ownerSlackId,
-        channels: this.channels,
-        allowedUsers: this.allowedUsers,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!resp.ok) {
@@ -528,7 +556,10 @@ export class GatewayChannel implements Channel {
       throw new Error(`Registration failed: ${resp.status} ${body}`);
     }
 
-    logger.info({ agentId: this.agentId, endpoint }, 'Registered with gateway');
+    logger.info(
+      { agentId: this.agentId, endpoint, ownerEmail: this.ownerEmail || undefined },
+      'Registered with gateway',
+    );
   }
 
   private async sendHeartbeat(): Promise<void> {
