@@ -51,10 +51,7 @@ function loadConfig(): SnowflakeMcpConfig | null {
   }
 
   if (!fs.existsSync(privateKeyFile)) {
-    logger.error(
-      { privateKeyFile },
-      'Snowflake private key file not found',
-    );
+    logger.error({ privateKeyFile }, 'Snowflake private key file not found');
     return null;
   }
 
@@ -108,19 +105,29 @@ export function startSnowflakeMcp(): boolean {
   const home = process.env.HOME || '/root';
   const uvxPath = path.join(home, '.local', 'bin', 'uvx');
   if (!fs.existsSync(uvxPath)) {
-    logger.error({ uvxPath }, 'uvx not found — install with: curl -LsSf https://astral.sh/uv/install.sh | sh');
+    logger.error(
+      { uvxPath },
+      'uvx not found — install with: curl -LsSf https://astral.sh/uv/install.sh | sh',
+    );
     return false;
   }
 
   const args: string[] = [
     'snowflake-labs-mcp',
-    '--transport', 'streamable-http',
-    '--port', String(config.port),
-    '--server-host', PROXY_BIND_HOST,
-    '--account', config.account,
-    '--user', config.username,
-    '--private-key-file', config.privateKeyFile,
-    '--service-config-file', config.serviceConfigFile,
+    '--transport',
+    'streamable-http',
+    '--port',
+    String(config.port),
+    '--server-host',
+    PROXY_BIND_HOST,
+    '--account',
+    config.account,
+    '--user',
+    config.username,
+    '--private-key-file',
+    config.privateKeyFile,
+    '--service-config-file',
+    config.serviceConfigFile,
   ];
 
   if (config.role) {
@@ -158,10 +165,7 @@ export function startSnowflakeMcp(): boolean {
   });
 
   mcpProcess.on('exit', (code, signal) => {
-    logger.warn(
-      { code, signal },
-      'Snowflake MCP server exited',
-    );
+    logger.warn({ code, signal }, 'Snowflake MCP server exited');
     mcpProcess = null;
   });
 
