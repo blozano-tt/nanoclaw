@@ -427,6 +427,19 @@ async function runQuery(
     log('GRAFANA_URL/GRAFANA_SERVICE_ACCOUNT_TOKEN not set, skipping Grafana MCP');
   }
 
+  // Snowflake MCP — runs on the HOST as an HTTP server (private key never enters container).
+  // The container only receives the URL via SNOWFLAKE_MCP_URL (CONTAINER_PASSTHROUGH_ENV).
+  const snowflakeMcpUrl = process.env.SNOWFLAKE_MCP_URL;
+  if (snowflakeMcpUrl) {
+    mcpServers['snowflake'] = {
+      type: 'http',
+      url: snowflakeMcpUrl,
+    };
+    log(`Snowflake MCP server configured (HTTP: ${snowflakeMcpUrl})`);
+  } else {
+    log('SNOWFLAKE_MCP_URL not set, skipping Snowflake MCP');
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -448,6 +461,7 @@ async function runQuery(
         'mcp__nanoclaw__*',
         'mcp__mcp-mermaid__*',
         'mcp__grafana__*',
+        'mcp__snowflake__*',
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',

@@ -10,6 +10,7 @@ import {
   TRIGGER_PATTERN,
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
+import { startSnowflakeMcp, stopSnowflakeMcp } from './snowflake-mcp.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -618,9 +619,13 @@ async function main(): Promise<void> {
     PROXY_BIND_HOST,
   );
 
+  // Start Snowflake MCP on the host (containers connect via HTTP)
+  startSnowflakeMcp();
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    stopSnowflakeMcp();
     proxyServer.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();

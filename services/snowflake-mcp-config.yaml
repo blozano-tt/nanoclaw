@@ -1,0 +1,33 @@
+# Snowflake-Labs MCP service configuration
+# Read-only access to CI/test results database
+#
+# Reference: https://github.com/Snowflake-Labs/mcp
+
+other_services:
+  object_manager: true    # list databases, schemas, tables, etc.
+  query_manager: true     # run SQL queries
+  semantic_manager: false  # not using semantic views
+
+# Read-only permissions — only allow read operations
+# Each entry is a single-key dict in a list
+sql_statement_permissions:
+  - Select: true
+  - Describe: true
+  - Show: true
+  - Explain: true
+  - Use: true
+  - Insert: false
+  - Update: false
+  - Delete: false
+  - Create: false
+  - Drop: false
+  - Alter: false
+  - Grant: false
+  - Revoke: false
+  - Truncate: false
+  - Merge: false
+  - Copy: false
+  - Transaction: false
+  - Rollback: false
+  - Command: true   # needed for SHOW GRANTS, SHOW ROLES, etc.
+  - Unknown: false
