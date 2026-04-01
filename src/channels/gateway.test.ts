@@ -19,18 +19,21 @@ vi.mock('../logger.js', () => ({
   },
 }));
 
+const defaultGatewayEnv = {
+  GATEWAY_URL: 'http://localhost:18080',
+  GATEWAY_SECRET: 'test-secret',
+  GATEWAY_AGENT_ID: 'test-agent',
+  GATEWAY_AGENT_NAME: 'BrAIn',
+  GATEWAY_OWNER_SLACK_ID: 'U07J3K6KS1K',
+  GATEWAY_LISTEN_PORT: '0', // Use port 0 for random available port
+  GATEWAY_CHANNELS: 'C0AJNU16ZGX,C09CK9093LH',
+};
+
 vi.mock('../env.js', () => ({
-  readEnvFile: vi.fn().mockReturnValue({
-    GATEWAY_URL: 'http://localhost:18080',
-    GATEWAY_SECRET: 'test-secret',
-    GATEWAY_AGENT_ID: 'test-agent',
-    GATEWAY_AGENT_NAME: 'BrAIn',
-    GATEWAY_OWNER_SLACK_ID: 'U07J3K6KS1K',
-    GATEWAY_LISTEN_PORT: '0', // Use port 0 for random available port
-    GATEWAY_CHANNELS: 'C0AJNU16ZGX,C09CK9093LH',
-  }),
+  readEnvFile: vi.fn(() => ({ ...defaultGatewayEnv })),
 }));
 
+import { readEnvFile } from '../env.js';
 import { GatewayChannel, GatewayChannelOpts } from './gateway.js';
 import { registerChannel } from './registry.js';
 
@@ -260,6 +263,27 @@ describe('GatewayChannel', () => {
       );
     });
 
+    it('does not mark third-party Slack bots as is_bot_message', async () => {
+      const msg = {
+        channel: 'C0AJNU16ZGX',
+        isDm: false,
+        messageTs: '1234567890.888888',
+        senderUserId: 'U_METAL_ALERTS',
+        senderName: 'Metal Infra Alerts',
+        text: 'merge gate failed',
+        timestamp: '2026-03-16T19:00:00.000Z',
+        isBot: true,
+      };
+
+      await postJson(serverPort, '/message', msg, authHeaders);
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'slack:C0AJNU16ZGX',
+        expect.objectContaining({
+          is_bot_message: false,
+        }),
+      );
+    });
+
     it('emits chat metadata', async () => {
       const msg = {
         channel: 'C0AJNU16ZGX',
@@ -340,6 +364,54 @@ describe('GatewayChannel', () => {
     it('returns 404 on unknown paths', async () => {
       const resp = await postJson(serverPort, '/unknown', {});
       expect(resp.status).toBe(404);
+    });
+  });
+
+  describe('GATEWAY_SLACK_BOT_USER_ID', () => {
+    let channel: GatewayChannel;
+    let opts: GatewayChannelOpts;
+    let serverPort: number;
+
+    beforeEach(async () => {
+      vi.mocked(readEnvFile).mockReturnValue({
+        ...defaultGatewayEnv,
+        GATEWAY_SLACK_BOT_USER_ID: 'UBRAINBOT',
+      });
+      opts = createTestOpts();
+      channel = new GatewayChannel(opts);
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve('{}'),
+      });
+      await channel.connect();
+      const srv = (channel as unknown as { server: http.Server }).server;
+      const addr = srv.address();
+      serverPort = typeof addr === 'object' && addr ? addr.port : 0;
+    });
+
+    afterEach(async () => {
+      await channel.disconnect();
+      vi.mocked(readEnvFile).mockReturnValue({ ...defaultGatewayEnv });
+    });
+
+    it('sets is_bot_message when sender matches configured Slack app bot id', async () => {
+      const authHeaders = { Authorization: 'Bearer test-secret' };
+      const msg = {
+        channel: 'C0AJNU16ZGX',
+        isDm: false,
+        messageTs: '1234567890.777777',
+        senderUserId: 'UBRAINBOT',
+        senderName: 'BrAIn',
+        text: 'rare echo',
+        timestamp: '2026-03-16T19:00:00.000Z',
+        isBot: true,
+      };
+
+      await postJson(serverPort, '/message', msg, authHeaders);
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'slack:C0AJNU16ZGX',
+        expect.objectContaining({ is_bot_message: true }),
+      );
     });
   });
 

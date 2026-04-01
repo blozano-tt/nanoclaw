@@ -59,6 +59,8 @@ export class GatewayChannel implements Channel {
   private agentId: string;
   private agentName: string;
   private ownerSlackId: string;
+  /** When set, only this Slack user id is stored as is_bot_message (our app bot). */
+  private slackBotUserId: string;
   private listenPort: number;
   private channels: string[];
 
@@ -81,6 +83,7 @@ export class GatewayChannel implements Channel {
       'GATEWAY_AGENT_ID',
       'GATEWAY_AGENT_NAME',
       'GATEWAY_OWNER_SLACK_ID',
+      'GATEWAY_SLACK_BOT_USER_ID',
       'GATEWAY_LISTEN_PORT',
       'GATEWAY_CHANNELS',
     ]);
@@ -90,6 +93,7 @@ export class GatewayChannel implements Channel {
     this.agentId = env.GATEWAY_AGENT_ID || '';
     this.agentName = env.GATEWAY_AGENT_NAME || ASSISTANT_NAME;
     this.ownerSlackId = env.GATEWAY_OWNER_SLACK_ID || '';
+    this.slackBotUserId = (env.GATEWAY_SLACK_BOT_USER_ID || '').trim();
     this.listenPort = parseInt(env.GATEWAY_LISTEN_PORT || '9090', 10);
     this.channels = (env.GATEWAY_CHANNELS || '')
       .split(',')
@@ -312,6 +316,11 @@ export class GatewayChannel implements Channel {
       !msg.isDm,
     );
 
+    const isOurBotMessage =
+      msg.isBot &&
+      this.slackBotUserId !== '' &&
+      msg.senderUserId === this.slackBotUserId;
+
     // Emit the message
     this.opts.onMessage(jid, {
       id: msg.messageTs,
@@ -321,7 +330,7 @@ export class GatewayChannel implements Channel {
       content: msg.text,
       timestamp,
       is_from_me: false, // Gateway never forwards our own messages
-      is_bot_message: msg.isBot,
+      is_bot_message: isOurBotMessage,
       thread_id: replyTarget,
     });
 

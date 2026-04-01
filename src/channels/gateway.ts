@@ -94,6 +94,8 @@ export class GatewayChannel implements Channel {
   private agentName: string;
   private ownerSlackId: string;
   private ownerEmail: string;
+  /** When set, only this Slack user id is stored as is_bot_message (our app bot). */
+  private slackBotUserId: string;
   private listenPort: number;
   private channels: string[];
   private allowedUsers: string[];
@@ -122,6 +124,7 @@ export class GatewayChannel implements Channel {
       'GATEWAY_AGENT_NAME',
       'GATEWAY_OWNER_SLACK_ID',
       'GATEWAY_OWNER_EMAIL',
+      'GATEWAY_SLACK_BOT_USER_ID',
       'GATEWAY_LISTEN_PORT',
       'GATEWAY_CHANNELS',
       'GATEWAY_ALLOWED_USERS',
@@ -137,6 +140,7 @@ export class GatewayChannel implements Channel {
     this.agentName = env.GATEWAY_AGENT_NAME || ASSISTANT_NAME;
     this.ownerSlackId = env.GATEWAY_OWNER_SLACK_ID || '';
     this.ownerEmail = env.GATEWAY_OWNER_EMAIL || '';
+    this.slackBotUserId = (env.GATEWAY_SLACK_BOT_USER_ID || '').trim();
     this.listenPort = parseInt(env.GATEWAY_LISTEN_PORT || '9090', 10);
     this.channels = (env.GATEWAY_CHANNELS || '')
       .split(',')
@@ -465,6 +469,15 @@ export class GatewayChannel implements Channel {
       !msg.isDm,
     );
 
+    // is_bot_message must mean "our assistant bot", not every Slack bot.
+    // Slack sets isBot for third-party apps (alerts, CI); those still need to flow
+    // to the agent. Only exclude messages from this app's bot user when
+    // GATEWAY_SLACK_BOT_USER_ID matches (gateway may echo them in edge cases).
+    const isOurBotMessage =
+      msg.isBot &&
+      this.slackBotUserId !== '' &&
+      msg.senderUserId === this.slackBotUserId;
+
     // Emit the message
     this.opts.onMessage(jid, {
       id: msg.messageTs,
@@ -474,7 +487,7 @@ export class GatewayChannel implements Channel {
       content: msg.text,
       timestamp,
       is_from_me: false, // Gateway never forwards our own messages
-      is_bot_message: msg.isBot,
+      is_bot_message: isOurBotMessage,
       thread_id: replyTarget,
     });
 
