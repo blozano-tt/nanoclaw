@@ -570,7 +570,11 @@ export class GatewayChannel implements Channel {
     }
 
     logger.info(
-      { agentId: this.agentId, endpoint, ownerEmail: this.ownerEmail || undefined },
+      {
+        agentId: this.agentId,
+        endpoint,
+        ownerEmail: this.ownerEmail || undefined,
+      },
       'Registered with gateway',
     );
   }
